@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Portal Fetcher V1</title>
+  <title>Portal Fetcher V2</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -105,6 +105,62 @@
       overflow-y: auto;
     }
     .progress-log div { padding: 0.15rem 0; }
+
+    /* Live browser view */
+    .live-view {
+      display: none;
+      margin-bottom: 1.5rem;
+    }
+    .live-view.active { display: block; }
+    .live-view-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .live-dot {
+      width: 8px; height: 8px;
+      background: var(--error);
+      border-radius: 50%;
+      animation: pulse-dot 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .live-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--error);
+      letter-spacing: 0.05em;
+    }
+    .live-view-container {
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      position: relative;
+      aspect-ratio: 1280 / 900;
+    }
+    .live-view-container img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .live-view-placeholder {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    .live-view.done .live-dot { animation: none; background: var(--text-muted); }
+    .live-view.done .live-label { color: var(--text-muted); }
+    .live-view.done .live-view-container { opacity: 0.6; }
 
     /* Result */
     .result-area { display: none; }
@@ -223,7 +279,7 @@
 </head>
 <body>
   <div class="container">
-    <h1><span>Portal</span> Fetcher <span style="font-size:0.6em; background:var(--primary); color:white; padding:0.15em 0.5em; border-radius:6px; vertical-align:middle;">V1</span></h1>
+    <h1><span>Portal</span> Fetcher <span style="font-size:0.6em; background:var(--primary); color:white; padding:0.15em 0.5em; border-radius:6px; vertical-align:middle;">V2</span></h1>
 
     <!-- Form -->
     <div class="card">
@@ -263,6 +319,18 @@
           <div class="progress-bar-fill" id="progressBar"></div>
         </div>
         <div class="progress-log" id="progressLog"></div>
+      </div>
+    </div>
+
+    <!-- Live Browser View -->
+    <div class="live-view" id="liveView">
+      <div class="live-view-header">
+        <div class="live-dot"></div>
+        <span class="live-label">Live Browser View</span>
+      </div>
+      <div class="live-view-container">
+        <img id="screencastImg" src="" alt="Live browser view">
+        <div class="live-view-placeholder" id="screencastPlaceholder">Connecting to browser...</div>
       </div>
     </div>
 
@@ -311,6 +379,12 @@
     const resultArea = document.getElementById('resultArea');
     const lightbox = document.getElementById('lightbox');
     const lightboxImg = document.getElementById('lightboxImg');
+    const liveView = document.getElementById('liveView');
+    const screencastImg = document.getElementById('screencastImg');
+    const screencastPlaceholder = document.getElementById('screencastPlaceholder');
+
+    let screencastWs = null;
+    let prevBlobUrl = null;
 
     // Load portals
     fetch('/api/portals')
@@ -336,6 +410,47 @@
       block.classList.toggle('open');
       this.textContent = block.classList.contains('open') ? 'Hide raw JSON' : 'Show raw JSON';
     });
+
+    // Screencast WebSocket
+    function startScreencast(jobId) {
+      liveView.classList.add('active');
+      liveView.classList.remove('done');
+      screencastImg.src = '';
+      screencastPlaceholder.style.display = '';
+
+      const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      screencastWs = new WebSocket(`${wsProtocol}//${location.host}/ws/screencast/${jobId}`);
+      screencastWs.binaryType = 'arraybuffer';
+
+      screencastWs.onmessage = (event) => {
+        // Hide placeholder on first frame
+        screencastPlaceholder.style.display = 'none';
+
+        const blob = new Blob([event.data], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
+        screencastImg.src = url;
+
+        // Free previous blob URL
+        if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+        prevBlobUrl = url;
+      };
+
+      screencastWs.onerror = () => {
+        screencastPlaceholder.textContent = 'Live view unavailable';
+      };
+    }
+
+    function stopScreencast() {
+      liveView.classList.add('done');
+      if (screencastWs) {
+        screencastWs.close();
+        screencastWs = null;
+      }
+      // Keep last frame visible briefly, then fade
+      setTimeout(() => {
+        liveView.classList.remove('active');
+      }, 3000);
+    }
 
     // Form submit
     form.addEventListener('submit', async (e) => {
@@ -365,6 +480,9 @@
         });
         const { job_id } = await startRes.json();
 
+        // Start live browser view
+        startScreencast(job_id);
+
         // Connect to SSE stream
         const evtSource = new EventSource(`/api/fetch/${job_id}/stream`);
 
@@ -380,6 +498,7 @@
 
           if (data.type === 'done') {
             evtSource.close();
+            stopScreencast();
             progressBar.classList.add('done');
             fetchBtn.disabled = false;
             fetchBtn.textContent = 'Fetch Details';
@@ -396,6 +515,7 @@
       } catch (err) {
         fetchBtn.disabled = false;
         fetchBtn.textContent = 'Fetch Details';
+        stopScreencast();
         progressLog.innerHTML += `<div style="color:var(--error)">Error: ${err.message}</div>`;
       }
     });
@@ -417,6 +537,7 @@
           progressLog.scrollTop = progressLog.scrollHeight;
 
           if (data.status === 'completed' || data.status === 'failed') {
+            stopScreencast();
             progressBar.classList.add('done');
             fetchBtn.disabled = false;
             fetchBtn.textContent = 'Fetch Details';

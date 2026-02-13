@@ -18,9 +18,9 @@ from portal_fetcher.screenshots import ScreenshotManager
 
 
 @click.group()
-@click.version_option(package_name="portal-fetcher", prog_name="Portal Fetcher (V1)")
+@click.version_option(package_name="portal-fetcher", prog_name="Portal Fetcher (V2)")
 def main() -> None:
-    """Portal Fetcher V1 — extract customer details from partner CRM portals."""
+    """Portal Fetcher V2 — extract customer details from partner CRM portals."""
 
 
 @main.command()
@@ -93,7 +93,7 @@ def serve(port: int, host: str) -> None:
 
     from portal_fetcher.web.app import app  # noqa: F811
 
-    click.echo(f"Starting Portal Fetcher V1 at http://{host}:{port}")
+    click.echo(f"Starting Portal Fetcher V2 at http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
@@ -155,8 +155,10 @@ async def _run_fetch(
     headless: bool,
     timeout: int,
     on_progress: Optional[Callable[[str], None]] = None,
+    on_screencast_frame: Optional[Callable[[bytes], None]] = None,
 ) -> FetchResult:
     """Orchestrate browser launch -> adapter execution -> error handling."""
+    from portal_fetcher.browser import start_screencast
 
     def progress(msg: str) -> None:
         if on_progress:
@@ -189,16 +191,24 @@ async def _run_fetch(
 
     try:
         async with create_browser_page(headless=headless, timeout=timeout) as page:
+            # Start CDP screencast if callback provided
+            cdp_session = None
+            if on_screencast_frame:
+                try:
+                    cdp_session = await start_screencast(page, on_screencast_frame)
+                    progress("Live view connected...")
+                except Exception:
+                    pass  # Screencast is optional — don't block fetch
+
             progress("Executing portal flow...")
             try:
-                return await adapter.execute(page)
+                result = await adapter.execute(page)
             except PortalFetchError as exc:
-                # Auto-capture DOM snapshot on PAGE_STRUCTURE_CHANGED
                 dom_snapshot_path = None
                 if exc.reason == FailureReason.PAGE_STRUCTURE_CHANGED:
                     progress("Page structure changed — capturing DOM snapshot...")
                     dom_snapshot_path = await _capture_dom_snapshot(page, screenshots)
-                return FetchResult(
+                result = FetchResult(
                     success=False,
                     portal=portal,
                     subscriber=subscriber,
@@ -208,7 +218,7 @@ async def _run_fetch(
                     dom_snapshot_path=dom_snapshot_path,
                 )
             except PwTimeout as exc:
-                return FetchResult(
+                result = FetchResult(
                     success=False,
                     portal=portal,
                     subscriber=subscriber,
@@ -217,7 +227,7 @@ async def _run_fetch(
                     screenshots=screenshots.paths,
                 )
             except Exception as exc:
-                return FetchResult(
+                result = FetchResult(
                     success=False,
                     portal=portal,
                     subscriber=subscriber,
@@ -225,6 +235,14 @@ async def _run_fetch(
                     error_message=f"{type(exc).__name__}: {exc}",
                     screenshots=screenshots.paths,
                 )
+            finally:
+                # Stop screencast before browser closes
+                if cdp_session:
+                    try:
+                        await cdp_session.send("Page.stopScreencast")
+                    except Exception:
+                        pass
+            return result
     except Exception as exc:
         return FetchResult(
             success=False,

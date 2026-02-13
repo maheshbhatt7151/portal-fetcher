@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -62,6 +62,7 @@ async def start_fetch(req: FetchRequest):
         "status": "running",
         "progress": [],
         "result": None,
+        "ws_clients": [],
     }
 
     asyncio.create_task(_run_job(job_id, req))
@@ -105,6 +106,36 @@ async def stream_job(job_id: str):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@app.websocket("/ws/screencast/{job_id}")
+async def ws_screencast(websocket: WebSocket, job_id: str):
+    """Stream live browser screencast frames to the client."""
+    if job_id not in jobs:
+        await websocket.close(code=4004, reason="Job not found")
+        return
+
+    await websocket.accept()
+    jobs[job_id]["ws_clients"].append(websocket)
+
+    try:
+        # Keep alive until client disconnects or job finishes
+        while True:
+            if jobs[job_id]["status"] in ("completed", "failed"):
+                await asyncio.sleep(0.5)  # Let final frames flush
+                break
+            await asyncio.sleep(0.5)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            jobs[job_id]["ws_clients"].remove(websocket)
+        except (ValueError, KeyError):
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
 @app.get("/screenshots/{path:path}")
 async def serve_screenshot(path: str):
     """Serve a screenshot file from the output directory."""
@@ -123,6 +154,21 @@ async def _run_job(job_id: str, req: FetchRequest) -> None:
     def on_progress(msg: str) -> None:
         jobs[job_id]["progress"].append(msg)
 
+    def on_screencast_frame(frame_bytes: bytes) -> None:
+        """Broadcast a JPEG frame to all connected WebSocket clients."""
+        clients = jobs[job_id].get("ws_clients", [])
+        dead = []
+        for ws in clients:
+            try:
+                asyncio.get_event_loop().create_task(ws.send_bytes(frame_bytes))
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            try:
+                clients.remove(ws)
+            except ValueError:
+                pass
+
     try:
         result = await _run_fetch(
             portal=req.portal,
@@ -134,11 +180,11 @@ async def _run_job(job_id: str, req: FetchRequest) -> None:
             headless=req.headless,
             timeout=req.timeout,
             on_progress=on_progress,
+            on_screencast_frame=on_screencast_frame,
         )
         result_dict = json.loads(result.model_dump_json())
         # Convert absolute screenshot paths to relative URLs for the web UI
         if result_dict.get("screenshots"):
-            output_abs = str(OUTPUT_DIR.resolve())
             result_dict["screenshot_urls"] = []
             for s in result_dict["screenshots"]:
                 rel = Path(s).relative_to(OUTPUT_DIR.resolve())
