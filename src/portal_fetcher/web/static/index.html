@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Portal Fetcher V3</title>
+  <title>Portal Fetcher V4</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -279,21 +279,16 @@
 </head>
 <body>
   <div class="container">
-    <h1><span>Portal</span> Fetcher <span style="font-size:0.6em; background:var(--primary); color:white; padding:0.15em 0.5em; border-radius:6px; vertical-align:middle;">V3</span></h1>
+    <h1><span>Portal</span> Fetcher <span style="font-size:0.6em; background:var(--primary); color:white; padding:0.15em 0.5em; border-radius:6px; vertical-align:middle;">V4</span></h1>
 
     <!-- Form -->
     <div class="card">
       <form id="fetchForm">
         <div class="form-grid">
-          <div class="form-group">
-            <label for="portal">Portal</label>
-            <select id="portal" required>
-              <option value="">Loading...</option>
-            </select>
-          </div>
-          <div class="form-group">
+          <div class="form-group full">
             <label for="portalUrl">Portal URL</label>
             <input type="url" id="portalUrl" placeholder="https://partner.onebroadband.in/partner/Default.aspx" required>
+            <div id="detectStatus" style="font-size:0.75rem; margin-top:0.25rem; min-height:1.2em;"></div>
           </div>
           <div class="form-group">
             <label for="loginUser">Username</label>
@@ -385,16 +380,38 @@
 
     let screencastWs = null;
     let prevBlobUrl = null;
+    let detectTimer = null;
 
-    // Load portals
-    fetch('/api/portals')
-      .then(r => r.json())
-      .then(data => {
-        const sel = document.getElementById('portal');
-        sel.innerHTML = data.portals.map(p =>
-          `<option value="${p}">${p}</option>`
-        ).join('');
-      });
+    // Auto-detect portal when URL changes
+    const portalUrlInput = document.getElementById('portalUrl');
+    const detectStatus = document.getElementById('detectStatus');
+
+    portalUrlInput.addEventListener('input', () => {
+      clearTimeout(detectTimer);
+      const url = portalUrlInput.value.trim();
+      if (url.length < 8) {
+        detectStatus.innerHTML = '';
+        return;
+      }
+      detectStatus.innerHTML = '<span style="color:var(--text-muted)">Detecting portal...</span>';
+      detectTimer = setTimeout(async () => {
+        try {
+          const res = await fetch('/api/detect-portal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ portal_url: url }),
+          });
+          const data = await res.json();
+          if (data.detected) {
+            detectStatus.innerHTML = `<span style="color:var(--success)">&#10003; Detected: <strong>${data.portal}</strong></span>`;
+          } else {
+            detectStatus.innerHTML = `<span style="color:var(--warning)">&#9888; No matching connector found</span>`;
+          }
+        } catch {
+          detectStatus.innerHTML = '';
+        }
+      }, 400);
+    });
 
     // Lightbox
     lightbox.addEventListener('click', () => lightbox.classList.remove('open'));
@@ -464,7 +481,6 @@
       resultArea.classList.remove('active');
 
       const body = {
-        portal: document.getElementById('portal').value,
         portal_url: document.getElementById('portalUrl').value,
         login_user: document.getElementById('loginUser').value,
         login_pass: document.getElementById('loginPass').value,

@@ -4,6 +4,9 @@
 portal:
   name: h8_onebroadband
   display_name: "H8 OneBroadband"
+  url_patterns:
+    - "onebroadband"
+    - "partner.onebroadband.in"
 
 flow:
   # ── Login ──────────────────────────────────────────

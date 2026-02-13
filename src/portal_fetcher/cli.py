@@ -10,7 +10,7 @@ from typing import Callable, Optional
 import click
 from playwright.async_api import TimeoutError as PwTimeout
 
-from portal_fetcher.adapters import ADAPTER_REGISTRY, get_adapter
+from portal_fetcher.adapters import ADAPTER_REGISTRY, detect_and_get_adapter, get_adapter
 from portal_fetcher.browser import create_browser_page
 from portal_fetcher.errors import PortalFetchError
 from portal_fetcher.models import FailureReason, FetchResult
@@ -18,9 +18,9 @@ from portal_fetcher.screenshots import ScreenshotManager
 
 
 @click.group()
-@click.version_option(package_name="portal-fetcher", prog_name="Portal Fetcher (V2)")
+@click.version_option(package_name="portal-fetcher", prog_name="Portal Fetcher (V4)")
 def main() -> None:
-    """Portal Fetcher V3 — extract customer details from partner CRM portals."""
+    """Portal Fetcher V4 — auto-detect portal, extract customer details."""
 
 
 @main.command()
@@ -37,7 +37,7 @@ def list_portals() -> None:
 
 
 @main.command()
-@click.option("--portal", required=True, help="Portal adapter name (see list-portals).")
+@click.option("--portal", default="", help="Portal adapter name (auto-detected from URL if omitted).")
 @click.option("--portal-url", required=True, help="Portal login URL.")
 @click.option(
     "--login-user",
@@ -93,7 +93,7 @@ def serve(port: int, host: str) -> None:
 
     from portal_fetcher.web.app import app  # noqa: F811
 
-    click.echo(f"Starting Portal Fetcher V3 at http://{host}:{port}")
+    click.echo(f"Starting Portal Fetcher V4 at http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
@@ -165,18 +165,33 @@ async def _run_fetch(
             on_progress(msg)
 
     screenshots = ScreenshotManager(output_dir)
-    progress("Resolving adapter...")
 
-    try:
-        adapter_cls, adapter_kwargs = get_adapter(portal)
-    except KeyError as exc:
-        return FetchResult(
-            success=False,
-            portal=portal,
-            subscriber=subscriber,
-            failure_reason=FailureReason.UNEXPECTED_ERROR,
-            error_message=str(exc),
-        )
+    # Auto-detect portal from URL if not provided
+    if not portal:
+        progress("Auto-detecting portal from URL...")
+        try:
+            portal, (adapter_cls, adapter_kwargs) = detect_and_get_adapter(portal_url)
+            progress(f"Detected portal: {portal}")
+        except KeyError as exc:
+            return FetchResult(
+                success=False,
+                portal="unknown",
+                subscriber=subscriber,
+                failure_reason=FailureReason.UNEXPECTED_ERROR,
+                error_message=str(exc),
+            )
+    else:
+        progress("Resolving adapter...")
+        try:
+            adapter_cls, adapter_kwargs = get_adapter(portal)
+        except KeyError as exc:
+            return FetchResult(
+                success=False,
+                portal=portal,
+                subscriber=subscriber,
+                failure_reason=FailureReason.UNEXPECTED_ERROR,
+                error_message=str(exc),
+            )
 
     adapter = adapter_cls(
         portal_url=portal_url,

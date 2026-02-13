@@ -38,6 +38,18 @@ def save_selectors(name: str, config: dict[str, Any]) -> Path:
     return path
 
 
+def detect_portal(url: str) -> str | None:
+    """Auto-detect portal name by matching URL against url_patterns in all YAML configs."""
+    url_lower = url.lower()
+    for name in list_configs():
+        config = load_selectors(name)
+        patterns = config.get("portal", {}).get("url_patterns", [])
+        for pattern in patterns:
+            if pattern.lower() in url_lower:
+                return name
+    return None
+
+
 def get_selector(config: dict[str, Any], dotted_key: str) -> str | None:
     """Resolve a dotted key like 'login.username_field' from a nested config dict.
 

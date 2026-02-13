@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
-from portal_fetcher.adapters import ADAPTER_REGISTRY
+from portal_fetcher.adapters import ADAPTER_REGISTRY, detect_and_get_adapter
 
 app = FastAPI(title="Portal Fetcher")
 
@@ -27,13 +27,16 @@ jobs: dict[str, dict[str, Any]] = {}
 
 
 class FetchRequest(BaseModel):
-    portal: str
     portal_url: str
     login_user: str
     login_pass: str
     subscriber: str
     headless: bool = True
     timeout: int = 30000
+
+
+class DetectRequest(BaseModel):
+    portal_url: str
 
 
 # ── Routes ────────────────────────────────────────────────────
@@ -52,6 +55,16 @@ async def list_portals():
 
     all_names = set(ADAPTER_REGISTRY.keys()) | set(list_configs())
     return {"portals": sorted(all_names)}
+
+
+@app.post("/api/detect-portal")
+async def detect_portal_endpoint(req: DetectRequest):
+    """Auto-detect which portal connector matches the given URL."""
+    try:
+        name, _ = detect_and_get_adapter(req.portal_url)
+        return {"detected": True, "portal": name}
+    except KeyError:
+        return {"detected": False, "portal": None, "message": "No matching portal connector found for this URL."}
 
 
 @app.post("/api/fetch")
@@ -170,8 +183,20 @@ async def _run_job(job_id: str, req: FetchRequest) -> None:
                 pass
 
     try:
+        # Auto-detect portal from URL
+        try:
+            portal_name, _ = detect_and_get_adapter(req.portal_url)
+            on_progress(f"Auto-detected portal: {portal_name}")
+        except KeyError:
+            jobs[job_id]["result"] = {
+                "error": f"No portal connector found for URL '{req.portal_url}'. "
+                "Add a YAML config with matching url_patterns."
+            }
+            jobs[job_id]["status"] = "failed"
+            return
+
         result = await _run_fetch(
-            portal=req.portal,
+            portal=portal_name,
             portal_url=req.portal_url,
             login_user=req.login_user,
             login_pass=req.login_pass,

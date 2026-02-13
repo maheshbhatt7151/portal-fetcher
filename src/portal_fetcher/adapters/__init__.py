@@ -34,3 +34,19 @@ def get_adapter(name: str) -> Tuple[Type[BasePortalAdapter], dict[str, Any]]:
         available = ", ".join(sorted(ADAPTER_REGISTRY))
         raise KeyError(f"Unknown portal '{name}'. Available: {available}")
     return ADAPTER_REGISTRY[name], {}
+
+
+def detect_and_get_adapter(url: str) -> Tuple[str, Tuple[Type[BasePortalAdapter], dict[str, Any]]]:
+    """Auto-detect portal from URL and return (portal_name, (adapter_cls, kwargs)).
+
+    Raises KeyError if no portal matches the URL.
+    """
+    from portal_fetcher.selector_store import detect_portal
+
+    name = detect_portal(url)
+    if not name:
+        raise KeyError(
+            f"No portal connector found for URL '{url}'. "
+            "Please select a portal manually or add a YAML config with matching url_patterns."
+        )
+    return name, get_adapter(name)
