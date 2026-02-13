@@ -1,52 +1,98 @@
 # H8 OneBroadband (partner.onebroadband.in) — ASP.NET WebForms portal
-# Edit selectors here when the portal DOM changes. No Python changes needed.
+# Flow-driven config: edit steps below to match portal changes.
 
 portal:
   name: h8_onebroadband
-  base_path: /partner
+  display_name: "H8 OneBroadband"
 
-login:
-  username_field: "input[id*='txtUserName'], input[name*='UserName']"
-  password_field: "input[id*='txtPassword'], input[name*='Password']"
-  submit_button: "input[id*='btnLogin'], input[id*='btnSubmit'], button:has-text('Login'), input[type='submit'][value*='Log']"
-  settle_seconds: 2
+flow:
+  # ── Login ──────────────────────────────────────────
+  - action: goto
+    url: "{portal_url}"
+    wait_for: "input[id*='txtUserName'], input[name*='UserName']"
 
-  # Failure detection selectors
-  otp_field: "input[id*='txtOTP'], input[id*='otp']"
-  captcha_image: "img[id*='captcha'], img[id*='Captcha'], div[class*='captcha']"
-  error_label: "[id*='lblError'], .error-message, [class*='alert-danger']"
+  - action: fill
+    selector: "input[id*='txtUserName'], input[name*='UserName']"
+    value: "{login_user}"
 
-  # Agreement / announcement popup dismiss buttons (tried in order)
-  popup_dismiss:
-    - "input[id*='btnAgree']"
-    - "input[id*='btnClose']"
-    - "button:has-text('Close')"
-    - "button:has-text('OK')"
-    - "a:has-text('Close')"
+  - action: fill
+    selector: "input[id*='txtPassword'], input[name*='Password']"
+    value: "{login_pass}"
 
-accounts:
-  # Navigate directly to this path (relative to base URL)
-  page_path: /Accounts.aspx
-  search_field: "#ContentPlaceHolder1_txtserch"
-  search_button: "#ContentPlaceHolder1_btnserch"
-  search_wait_seconds: 4
+  - action: screenshot
+    name: login_filled
 
-  # Results grid
-  grid: "#ContentPlaceHolder1_gdcomp"
-  grid_link: "#ContentPlaceHolder1_gdcomp_LinkButton1_0"
-  grid_link_fallback: "#ContentPlaceHolder1_gdcomp a:has-text('{subscriber}')"
+  - action: click
+    selector: "input[id*='btnLogin'], input[id*='btnSubmit'], button:has-text('Login'), input[type='submit'][value*='Log']"
 
-detail:
-  settle_seconds: 2
+  - action: wait_for_load
+  - action: sleep
+    seconds: 2
 
-  # Field selectors on the detail page
+  # ── Post-login checks ─────────────────────────────
+  - action: check_otp
+    selector: "input[id*='txtOTP'], input[id*='otp']"
+
+  - action: check_captcha
+    selector: "img[id*='captcha'], img[id*='Captcha'], div[class*='captcha']"
+
+  - action: check_login_error
+    selector: "[id*='lblError'], .error-message, [class*='alert-danger']"
+
+  - action: dismiss_popup
+    selectors:
+      - "input[id*='btnAgree']"
+      - "input[id*='btnClose']"
+      - "button:has-text('Close')"
+      - "button:has-text('OK')"
+      - "a:has-text('Close')"
+
+  - action: screenshot
+    name: post_login
+
+  # ── Navigate to Accounts page ──────────────────────
+  - action: goto
+    url: "{portal_url}/../Accounts.aspx"
+    wait_for: "#ContentPlaceHolder1_txtserch"
+
+  - action: fill
+    selector: "#ContentPlaceHolder1_txtserch"
+    value: "{subscriber}"
+
+  - action: screenshot
+    name: search_filled
+
+  - action: click
+    selector: "#ContentPlaceHolder1_btnserch"
+
+  - action: sleep
+    seconds: 4
+
+  - action: screenshot
+    name: search_results
+
+  # ── Click user detail link in grid ─────────────────
+  - action: click_link
+    selector: "#ContentPlaceHolder1_gdcomp a"
+    text_contains: "{subscriber}"
+
+  - action: wait_for_load
+  - action: sleep
+    seconds: 2
+
+  - action: screenshot
+    name: user_detail_page
+
+# ── Data extraction ──────────────────────────────────
+# Uses CSS selectors (ASP.NET WebForms IDs)
+extract:
+  method: selectors
   fields:
     user_id: "#ContentPlaceHolder1_lbl_USERNAME"
     name: "#ContentPlaceHolder1_lbl_AccName"
     status: "#ContentPlaceHolder1_lbl_RemainingDays"
     router_mac: "#ContentPlaceHolder1_lbl_MACID"
 
-  # Current plan
   current_plan:
     label: "#ContentPlaceHolder1_lbl_CurrentPlan"
     plan_name: "#ContentPlaceHolder1_tbAdditonal_tpPlan_gdPlan_lblPlan_0"
@@ -55,7 +101,6 @@ detail:
     activation_date: "#ContentPlaceHolder1_tbAdditonal_tpPlan_gdPlan_lblActivationDate_0"
     expiry_date: "#ContentPlaceHolder1_tbAdditonal_tpPlan_gdPlan_lblExpiryDate_0"
 
-  # Future plan tab
   future_plan:
     tab: "#__tab_ContentPlaceHolder1_tbAdditonal_tpFutureplan"
     content: "#ContentPlaceHolder1_tbAdditonal_tpFutureplan"

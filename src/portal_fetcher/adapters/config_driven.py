@@ -1,12 +1,16 @@
-"""Config-driven adapter — reads all selectors from YAML.
+"""Flow-driven adapter — reads automation steps + extraction rules from YAML.
 
-Same flow as the hardcoded H8 adapter, but every CSS selector comes
-from the YAML config via selector_store.get_selector().
+Any portal can be automated by writing a YAML config with two sections:
+  flow:   list of action steps (goto, fill, click, select_option, etc.)
+  extract: field definitions (method: selectors or table_cells)
+
+No Python changes needed to add a new portal.
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from playwright.async_api import Page, TimeoutError as PwTimeout
@@ -19,29 +23,27 @@ from portal_fetcher.models import (
     PlanDetails,
     UserDetails,
 )
-from portal_fetcher.selector_store import get_selector, get_selector_list
 
 
 class ConfigDrivenAdapter(BasePortalAdapter):
-    """Generic adapter that drives any portal using a YAML selector config."""
+    """Generic adapter that drives any portal using a YAML flow config."""
 
     def __init__(self, *args: Any, selector_config: dict[str, Any], **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.cfg = selector_config
 
-    def _sel(self, dotted_key: str) -> str:
-        """Get a required selector or raise PAGE_STRUCTURE_CHANGED."""
-        val = get_selector(self.cfg, dotted_key)
-        if not val:
-            raise PortalFetchError(
-                FailureReason.PAGE_STRUCTURE_CHANGED,
-                f"Missing selector in config: '{dotted_key}'",
-            )
-        return val
+    # ── template variable substitution ────────────────────────
 
-    def _sel_opt(self, dotted_key: str) -> str | None:
-        """Get an optional selector (returns None if missing)."""
-        return get_selector(self.cfg, dotted_key)
+    def _sub(self, text: str) -> str:
+        """Replace {portal_url}, {login_user}, {login_pass}, {subscriber} in text."""
+        if not isinstance(text, str):
+            return text
+        return (
+            text.replace("{portal_url}", self.portal_url)
+            .replace("{login_user}", self.login_user)
+            .replace("{login_pass}", self.login_pass)
+            .replace("{subscriber}", self.subscriber)
+        )
 
     # ── helpers ───────────────────────────────────────────────
 
@@ -53,19 +55,63 @@ class ConfigDrivenAdapter(BasePortalAdapter):
         except PwTimeout:
             return None
 
+    async def _extract_table_cells(self, page: Page) -> dict[str, str]:
+        """Extract label→value pairs from all tables with <td><span>Label</span></td><td>Value</td> pattern."""
+        return await page.evaluate("""() => {
+            const result = {};
+            const rows = document.querySelectorAll('tr');
+            for (const row of rows) {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 2) {
+                    const labelSpan = cells[0].querySelector('span');
+                    const labelText = labelSpan ? labelSpan.innerText.trim() : cells[0].innerText.trim();
+                    if (labelText && labelText.length < 80) {
+                        // Get the raw text of the value cell, cleaning up whitespace
+                        let val = cells[1].innerText.trim();
+                        // Remove excessive whitespace
+                        val = val.replace(/\\s+/g, ' ').substring(0, 200);
+                        if (val) result[labelText] = val;
+                    }
+                }
+            }
+            return result;
+        }""")
+
     # ── main flow ─────────────────────────────────────────────
 
     async def execute(self, page: Page) -> FetchResult:
         details = UserDetails(user_id=self.subscriber)
 
-        await self._open_portal(page)
-        await self._login(page)
-        await self._navigate_to_accounts(page)
-        await self._search_subscriber(page)
-        await self._open_user_details(page, details)
-        await self._extract_plans(page, details)
+        # Execute flow steps
+        flow = self.cfg.get("flow", [])
+        if not flow:
+            raise PortalFetchError(
+                FailureReason.PAGE_STRUCTURE_CHANGED,
+                "YAML config has no 'flow' section.",
+            )
 
-        portal_name = get_selector(self.cfg, "portal.name") or "unknown"
+        for i, step in enumerate(flow):
+            action = step.get("action", "")
+            try:
+                await self._execute_step(page, step)
+            except PortalFetchError:
+                raise
+            except PwTimeout as exc:
+                await self.screenshots.capture(page, f"timeout_step_{i}")
+                raise PortalFetchError(
+                    FailureReason.PORTAL_TIMEOUT,
+                    f"Timeout at step {i} ({action}): {exc}",
+                )
+            except Exception as exc:
+                raise PortalFetchError(
+                    FailureReason.PAGE_STRUCTURE_CHANGED,
+                    f"Error at step {i} ({action}): {type(exc).__name__}: {exc}",
+                )
+
+        # Extract data
+        await self._extract_data(page, details)
+
+        portal_name = self.cfg.get("portal", {}).get("name", "unknown")
         return FetchResult(
             success=True,
             portal=portal_name,
@@ -74,172 +120,187 @@ class ConfigDrivenAdapter(BasePortalAdapter):
             screenshots=self.screenshots.paths,
         )
 
-    # ── step implementations ──────────────────────────────────
+    # ── step execution ───────────────────────────────────────
 
-    async def _open_portal(self, page: Page) -> None:
-        try:
-            await page.goto(self.portal_url, wait_until="domcontentloaded")
-            await page.wait_for_selector(
-                self._sel("login.username_field"), timeout=30000,
-            )
-        except PwTimeout:
-            await self.screenshots.capture(page, "portal_timeout")
-            raise PortalFetchError(
-                FailureReason.PORTAL_TIMEOUT,
-                "Login page did not load within 30 seconds.",
-            )
+    async def _execute_step(self, page: Page, step: dict[str, Any]) -> None:
+        action = step.get("action", "")
 
-    async def _login(self, page: Page) -> None:
-        await page.locator(self._sel("login.username_field")).first.fill(self.login_user)
-        await page.locator(self._sel("login.password_field")).first.fill(self.login_pass)
-        await self.screenshots.capture(page, "login_filled")
-
-        await page.locator(self._sel("login.submit_button")).first.click()
-        await page.wait_for_load_state("domcontentloaded")
-
-        settle = self.cfg.get("login", {}).get("settle_seconds", 2)
-        await asyncio.sleep(settle)
-
-        # OTP detection
-        otp_sel = self._sel_opt("login.otp_field")
-        if otp_sel:
+        if action == "goto":
+            url = self._sub(step["url"])
+            wait_for = step.get("wait_for")
             try:
-                await page.wait_for_selector(otp_sel, state="visible", timeout=2000)
-                await self.screenshots.capture(page, "otp_required")
-                raise PortalFetchError(FailureReason.OTP_REQUIRED, "Portal requires OTP verification.")
+                await page.goto(url, wait_until="domcontentloaded")
+                if wait_for:
+                    await page.wait_for_selector(self._sub(wait_for), timeout=30000)
             except PwTimeout:
-                pass
+                await self.screenshots.capture(page, "portal_timeout")
+                raise PortalFetchError(
+                    FailureReason.PORTAL_TIMEOUT,
+                    f"Page did not load or element '{wait_for}' not found.",
+                )
 
-        # CAPTCHA detection
-        captcha_sel = self._sel_opt("login.captcha_image")
-        if captcha_sel:
-            try:
-                await page.wait_for_selector(captcha_sel, state="visible", timeout=2000)
-                await self.screenshots.capture(page, "captcha_required")
-                raise PortalFetchError(FailureReason.CAPTCHA_REQUIRED, "Portal requires CAPTCHA.")
-            except PwTimeout:
-                pass
+        elif action == "fill":
+            selector = self._sub(step["selector"])
+            value = self._sub(step["value"])
+            await page.locator(selector).first.fill(value)
 
-        # Login error banner
-        error_sel = self._sel_opt("login.error_label")
-        if error_sel:
-            error_el = page.locator(error_sel).first
-            try:
-                await error_el.wait_for(state="visible", timeout=2000)
-                error_text = (await error_el.inner_text()).strip()
-                if error_text:
-                    await self.screenshots.capture(page, "login_error")
-                    raise PortalFetchError(FailureReason.LOGIN_FAILED, f"Login failed: {error_text}")
-            except PwTimeout:
-                pass
+        elif action == "click":
+            selector = self._sub(step["selector"])
+            await page.locator(selector).first.click()
 
-        # Dismiss popup
-        for sel in get_selector_list(self.cfg, "login.popup_dismiss"):
-            try:
-                btn = page.locator(sel).first
-                await btn.wait_for(state="visible", timeout=2000)
-                await btn.click()
-                await page.wait_for_load_state("domcontentloaded")
-                break
-            except PwTimeout:
-                continue
+        elif action == "select_option":
+            selector = self._sub(step["selector"])
+            value = self._sub(step.get("value", ""))
+            label = self._sub(step.get("label", ""))
+            if value:
+                await page.select_option(selector, value=value)
+            elif label:
+                await page.select_option(selector, label=label)
 
-        await self.screenshots.capture(page, "post_login")
+        elif action == "press_key":
+            selector = self._sub(step["selector"])
+            key = step["key"]
+            await page.press(selector, key)
 
-    async def _navigate_to_accounts(self, page: Page) -> None:
-        base_url = self.portal_url.rsplit("/", 1)[0]
-        page_path = get_selector(self.cfg, "accounts.page_path") or "/Accounts.aspx"
-        search_field_sel = self._sel("accounts.search_field")
-
-        try:
-            await page.goto(f"{base_url}{page_path}", wait_until="domcontentloaded")
-            await page.wait_for_selector(search_field_sel, timeout=15000)
-        except PwTimeout:
-            await self.screenshots.capture(page, "accounts_page_timeout")
-            raise PortalFetchError(
-                FailureReason.PAGE_STRUCTURE_CHANGED,
-                "Accounts page did not load or search field missing.",
-            )
-
-    async def _search_subscriber(self, page: Page) -> None:
-        search_field = page.locator(self._sel("accounts.search_field"))
-        await search_field.click()
-        await search_field.fill(self.subscriber)
-        await self.screenshots.capture(page, "search_filled")
-
-        await page.locator(self._sel("accounts.search_button")).click()
-
-        wait_secs = self.cfg.get("accounts", {}).get("search_wait_seconds", 4)
-        await asyncio.sleep(wait_secs)
-
-        await self.screenshots.capture(page, "search_results")
-
-        grid = page.locator(self._sel("accounts.grid"))
-        try:
-            await grid.wait_for(state="attached", timeout=10000)
-        except PwTimeout:
-            raise PortalFetchError(
-                FailureReason.SUBSCRIBER_NOT_FOUND,
-                f"No results grid for subscriber '{self.subscriber}'.",
-            )
-
-        rows = grid.locator("tr")
-        row_count = await rows.count()
-
-        if row_count <= 1:
-            raise PortalFetchError(
-                FailureReason.SUBSCRIBER_NOT_FOUND,
-                f"No results for subscriber '{self.subscriber}'.",
-            )
-
-        data_rows = row_count - 1
-        if data_rows > 1:
-            raise PortalFetchError(
-                FailureReason.MULTIPLE_RESULTS,
-                f"Expected 1 result, got {data_rows} for '{self.subscriber}'.",
-            )
-
-        first_row = rows.nth(1)
-        row_text = await first_row.inner_text()
-
-        if self.subscriber.lower() not in row_text.lower():
-            raise PortalFetchError(
-                FailureReason.IDENTITY_MISMATCH,
-                f"Result row does not contain '{self.subscriber}': {row_text[:200]}",
-            )
-
-        if "active" not in row_text.lower():
-            raise PortalFetchError(
-                FailureReason.INACTIVE_SUBSCRIBER,
-                f"Subscriber '{self.subscriber}' appears inactive: {row_text[:200]}",
-            )
-
-    async def _open_user_details(self, page: Page, details: UserDetails) -> None:
-        grid_link_sel = self._sel("accounts.grid_link")
-        fallback_sel = self._sel_opt("accounts.grid_link_fallback")
-        if fallback_sel:
-            fallback_sel = fallback_sel.replace("{subscriber}", self.subscriber)
-            combined = f"{grid_link_sel}, {fallback_sel}"
-        else:
-            combined = grid_link_sel
-
-        user_link = page.locator(combined).first
-        try:
-            await user_link.click()
+        elif action == "wait_for_load":
             await page.wait_for_load_state("domcontentloaded")
-            settle = self.cfg.get("detail", {}).get("settle_seconds", 2)
-            await asyncio.sleep(settle)
-        except PwTimeout:
-            await self.screenshots.capture(page, "user_link_missing")
-            raise PortalFetchError(
-                FailureReason.PAGE_STRUCTURE_CHANGED,
-                f"Could not click user link for '{self.subscriber}'.",
-            )
 
-        await self.screenshots.capture(page, "user_detail_page")
+        elif action == "wait_for":
+            selector = self._sub(step["selector"])
+            timeout = step.get("timeout", 15000)
+            await page.wait_for_selector(selector, timeout=timeout)
 
-        # Extract fields
-        fields = self.cfg.get("detail", {}).get("fields", {})
+        elif action == "sleep":
+            seconds = step.get("seconds", 2)
+            await asyncio.sleep(seconds)
+
+        elif action == "screenshot":
+            name = step.get("name", "step")
+            await self.screenshots.capture(page, name)
+
+        elif action == "click_link":
+            selector = self._sub(step["selector"])
+            text_contains = self._sub(step.get("text_contains", ""))
+            links = await page.query_selector_all(selector)
+            clicked = False
+
+            # First try to find a visible link whose text contains the subscriber
+            for link in links:
+                visible = await link.is_visible()
+                if not visible:
+                    continue
+                link_text = (await link.inner_text()).strip()
+                if text_contains and text_contains.lower() not in link_text.lower():
+                    continue
+                await link.click()
+                clicked = True
+                break
+
+            # Fallback: click any visible matching link
+            if not clicked:
+                for link in links:
+                    visible = await link.is_visible()
+                    if visible:
+                        await link.click()
+                        clicked = True
+                        break
+
+            if not clicked:
+                # Last resort: navigate directly to the href
+                if links:
+                    href = await links[0].get_attribute("href") or ""
+                    if href:
+                        await page.goto(href, wait_until="domcontentloaded")
+                        clicked = True
+
+            if not clicked:
+                raise PortalFetchError(
+                    FailureReason.SUBSCRIBER_NOT_FOUND,
+                    f"No clickable link found for selector '{selector}' "
+                    f"containing '{text_contains}'.",
+                )
+
+        elif action == "check_login_error":
+            error_sel = self._sub(step.get("selector", ""))
+            if error_sel:
+                try:
+                    el = page.locator(error_sel).first
+                    await el.wait_for(state="visible", timeout=2000)
+                    text = (await el.inner_text()).strip()
+                    if text:
+                        await self.screenshots.capture(page, "login_error")
+                        raise PortalFetchError(
+                            FailureReason.LOGIN_FAILED,
+                            f"Login failed: {text}",
+                        )
+                except PwTimeout:
+                    pass  # No error visible — login succeeded
+
+        elif action == "check_otp":
+            otp_sel = self._sub(step.get("selector", ""))
+            if otp_sel:
+                try:
+                    await page.wait_for_selector(otp_sel, state="visible", timeout=2000)
+                    await self.screenshots.capture(page, "otp_required")
+                    raise PortalFetchError(
+                        FailureReason.OTP_REQUIRED,
+                        "Portal requires OTP verification.",
+                    )
+                except PwTimeout:
+                    pass
+
+        elif action == "check_captcha":
+            captcha_sel = self._sub(step.get("selector", ""))
+            if captcha_sel:
+                try:
+                    await page.wait_for_selector(captcha_sel, state="visible", timeout=2000)
+                    await self.screenshots.capture(page, "captcha_required")
+                    raise PortalFetchError(
+                        FailureReason.CAPTCHA_REQUIRED,
+                        "Portal requires CAPTCHA.",
+                    )
+                except PwTimeout:
+                    pass
+
+        elif action == "dismiss_popup":
+            selectors = step.get("selectors", [])
+            for sel in selectors:
+                sel = self._sub(sel)
+                try:
+                    btn = page.locator(sel).first
+                    await btn.wait_for(state="visible", timeout=2000)
+                    await btn.click()
+                    await page.wait_for_load_state("domcontentloaded")
+                    break
+                except PwTimeout:
+                    continue
+
+        else:
+            pass  # Unknown action — skip silently
+
+    # ── data extraction ──────────────────────────────────────
+
+    async def _extract_data(self, page: Page, details: UserDetails) -> None:
+        extract = self.cfg.get("extract", {})
+        if not extract:
+            return
+
+        method = extract.get("method", "selectors")
+        fields = extract.get("fields", {})
+
+        if method == "table_cells":
+            await self._extract_table_cells_method(page, details, fields, extract)
+        else:
+            await self._extract_selectors_method(page, details, fields, extract)
+
+    async def _extract_selectors_method(
+        self,
+        page: Page,
+        details: UserDetails,
+        fields: dict[str, str],
+        extract: dict[str, Any],
+    ) -> None:
+        """Extract fields using CSS selectors (H8 OneBroadband style)."""
         if fields.get("user_id"):
             details.user_id = await self._text_of(page, fields["user_id"]) or self.subscriber
         if fields.get("name"):
@@ -248,6 +309,17 @@ class ConfigDrivenAdapter(BasePortalAdapter):
             details.status = await self._text_of(page, fields["status"])
         if fields.get("router_mac"):
             details.router_mac = await self._text_of(page, fields["router_mac"])
+        if fields.get("mobile"):
+            details.mobile = await self._text_of(page, fields["mobile"])
+        if fields.get("email"):
+            details.email = await self._text_of(page, fields["email"])
+
+        # Extra fields
+        for key, selector in fields.items():
+            if key not in ("user_id", "name", "status", "router_mac", "mobile", "email"):
+                val = await self._text_of(page, selector)
+                if val:
+                    details.extra_fields[key] = val
 
         # Identity check
         displayed = details.user_id or ""
@@ -257,47 +329,97 @@ class ConfigDrivenAdapter(BasePortalAdapter):
                 f"Detail page shows '{displayed}', expected '{self.subscriber}'.",
             )
 
-    async def _extract_plans(self, page: Page, details: UserDetails) -> None:
-        cp = self.cfg.get("detail", {}).get("current_plan", {})
+        # Current plan extraction
+        cp = extract.get("current_plan", {})
+        if cp:
+            plan_name = await self._text_of(page, cp["plan_name"]) if cp.get("plan_name") else None
+            plan_label = await self._text_of(page, cp["label"]) if cp.get("label") else None
+            validity = await self._text_of(page, cp["validity"]) if cp.get("validity") else None
+            validity_unit = await self._text_of(page, cp["validity_unit"]) if cp.get("validity_unit") else None
+            activation = await self._text_of(page, cp["activation_date"]) if cp.get("activation_date") else None
+            expiry = await self._text_of(page, cp["expiry_date"]) if cp.get("expiry_date") else None
 
-        plan_label = await self._text_of(page, cp["label"]) if cp.get("label") else None
-        plan_name = await self._text_of(page, cp["plan_name"]) if cp.get("plan_name") else None
-        validity = await self._text_of(page, cp["validity"]) if cp.get("validity") else None
-        validity_unit = await self._text_of(page, cp["validity_unit"]) if cp.get("validity_unit") else None
-        activation = await self._text_of(page, cp["activation_date"]) if cp.get("activation_date") else None
-        expiry = await self._text_of(page, cp["expiry_date"]) if cp.get("expiry_date") else None
+            duration = f"{validity} {validity_unit}" if validity and validity_unit else None
+            details.current_plan = PlanDetails(
+                plan_name=plan_name or plan_label,
+                duration=duration,
+                start_date=activation,
+                expiry_date=expiry,
+            )
+            await self.screenshots.capture(page, "current_plan")
 
-        duration = None
-        if validity and validity_unit:
-            duration = f"{validity} {validity_unit}"
-
-        details.current_plan = PlanDetails(
-            plan_name=plan_name or plan_label,
-            speed=None,
-            duration=duration,
-            start_date=activation,
-            expiry_date=expiry,
-        )
-
-        await self.screenshots.capture(page, "current_plan")
-
-        # Future plan tab
-        fp = self.cfg.get("detail", {}).get("future_plan", {})
-        future_tab_sel = fp.get("tab")
-        if future_tab_sel:
-            future_tab = page.locator(future_tab_sel)
+        # Future plan
+        fp = extract.get("future_plan", {})
+        if fp.get("tab"):
             try:
-                await future_tab.wait_for(state="visible", timeout=3000)
-                await future_tab.click()
+                tab = page.locator(fp["tab"])
+                await tab.wait_for(state="visible", timeout=3000)
+                await tab.click()
                 await asyncio.sleep(1)
-
-                content_sel = fp.get("content")
-                future_plan_text = await self._text_of(page, content_sel) if content_sel else None
-
+                content = await self._text_of(page, fp["content"]) if fp.get("content") else None
                 empty_marker = fp.get("empty_marker", "no recent")
-                if future_plan_text and empty_marker.lower() not in future_plan_text.lower():
-                    details.future_plan = PlanDetails(plan_name=future_plan_text)
-
+                if content and empty_marker.lower() not in content.lower():
+                    details.future_plan = PlanDetails(plan_name=content)
                 await self.screenshots.capture(page, "future_plan")
             except PwTimeout:
                 pass
+
+    async def _extract_table_cells_method(
+        self,
+        page: Page,
+        details: UserDetails,
+        fields: dict[str, str],
+        extract: dict[str, Any],
+    ) -> None:
+        """Extract fields by matching label text in table cells (Weebo style)."""
+        cell_data = await self._extract_table_cells(page)
+
+        # Map YAML field names to label text
+        for field_name, label_text in fields.items():
+            val = cell_data.get(label_text)
+            if not val:
+                continue
+            # Clean up common noise (icons, verification text)
+            val = re.split(r'\s*Not verified', val)[0]
+            val = re.split(r'\s*Not Opted', val)[0]
+            val = val.strip()
+
+            if field_name == "user_id":
+                details.user_id = val
+            elif field_name == "name":
+                details.name = val
+            elif field_name == "status":
+                details.status = val
+            elif field_name == "router_mac":
+                details.router_mac = val
+            elif field_name == "mobile":
+                details.mobile = val
+            elif field_name == "email":
+                details.email = val
+            else:
+                details.extra_fields[field_name] = val
+
+        # Identity check
+        displayed = details.user_id or ""
+        if displayed and self.subscriber.lower() not in displayed.lower():
+            raise PortalFetchError(
+                FailureReason.IDENTITY_MISMATCH,
+                f"Detail page shows '{displayed}', expected '{self.subscriber}'.",
+            )
+
+        # Current plan from table cells
+        cp = extract.get("current_plan", {})
+        if cp:
+            plan_name = cell_data.get(cp.get("plan_name", ""), None)
+            expiry = cell_data.get(cp.get("expiry_date", ""), None)
+            start = cell_data.get(cp.get("start_date", ""), None)
+            speed = cell_data.get(cp.get("speed", ""), None)
+            if plan_name or expiry:
+                details.current_plan = PlanDetails(
+                    plan_name=plan_name,
+                    speed=speed,
+                    start_date=start,
+                    expiry_date=expiry,
+                )
+
+        await self.screenshots.capture(page, "extracted_data")

@@ -1,0 +1,93 @@
+# CloudCRM Weebo (cloudcrm.weebo.co.in)
+# Flow-driven config: edit steps below to match portal changes.
+
+portal:
+  name: weebo_cloudcrm
+  display_name: "CloudCRM Weebo"
+
+flow:
+  # ── Login ──────────────────────────────────────────
+  - action: goto
+    url: "{portal_url}"
+    wait_for: "#username"
+
+  - action: fill
+    selector: "#username"
+    value: "{login_user}"
+
+  - action: fill
+    selector: "#password"
+    value: "{login_pass}"
+
+  - action: screenshot
+    name: login_filled
+
+  - action: click
+    selector: "#logn_submt"
+
+  - action: wait_for_load
+  - action: sleep
+    seconds: 3
+
+  - action: screenshot
+    name: post_login
+
+  # ── Search for subscriber via navbar form ──────────
+  - action: select_option
+    selector: "#q_user_search"
+    value: "username"
+
+  - action: fill
+    selector: "#usernameq09283"
+    value: "{subscriber}"
+
+  - action: screenshot
+    name: search_filled
+
+  - action: press_key
+    selector: "#usernameq09283"
+    key: Enter
+
+  - action: wait_for_load
+  - action: sleep
+    seconds: 3
+
+  - action: screenshot
+    name: search_results
+
+  # ── Click subscriber detail link ───────────────────
+  - action: click_link
+    selector: "a[href*='/admin/user/details']"
+    text_contains: "{subscriber}"
+
+  - action: wait_for_load
+  - action: sleep
+    seconds: 3
+
+  - action: screenshot
+    name: user_detail_page
+
+# ── Data extraction ──────────────────────────────────
+# Uses table_cells method: matches <td><span>Label</span></td><td>Value</td>
+extract:
+  method: table_cells
+  fields:
+    user_id: "Username"
+    name: "Name"
+    status: "Account Status"
+    mobile: "Register Mobile"
+    email: "Register Email"
+    router_mac: "MAC Address"
+    account_no: "A/C No"
+    franchise: "Franchise Name"
+    branch: "Branch"
+    balance: "Balance Amount"
+    connection_status: "Connection Status"
+    ip_address: "Ip Address"
+    billing_mode: "Billing Mode"
+    user_type: "User Type"
+
+  current_plan:
+    plan_name: "Package"
+    expiry_date: "Expiry Date"
+    start_date: "Last Renewal"

@@ -41,8 +41,11 @@ class UserDetails(BaseModel):
     name: Optional[str] = None
     status: Optional[str] = None
     router_mac: Optional[str] = None
+    mobile: Optional[str] = None
+    email: Optional[str] = None
     current_plan: Optional[PlanDetails] = None
     future_plan: Optional[PlanDetails] = None
+    extra_fields: dict[str, str] = Field(default_factory=dict)
 
 
 class FetchResult(BaseModel):

@@ -20,7 +20,7 @@ from portal_fetcher.screenshots import ScreenshotManager
 @click.group()
 @click.version_option(package_name="portal-fetcher", prog_name="Portal Fetcher (V2)")
 def main() -> None:
-    """Portal Fetcher V2 — extract customer details from partner CRM portals."""
+    """Portal Fetcher V3 — extract customer details from partner CRM portals."""
 
 
 @main.command()
@@ -93,7 +93,7 @@ def serve(port: int, host: str) -> None:
 
     from portal_fetcher.web.app import app  # noqa: F811
 
-    click.echo(f"Starting Portal Fetcher V2 at http://{host}:{port}")
+    click.echo(f"Starting Portal Fetcher V3 at http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

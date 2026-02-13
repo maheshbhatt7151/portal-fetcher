@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Portal Fetcher V2</title>
+  <title>Portal Fetcher V3</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -279,7 +279,7 @@
 </head>
 <body>
   <div class="container">
-    <h1><span>Portal</span> Fetcher <span style="font-size:0.6em; background:var(--primary); color:white; padding:0.15em 0.5em; border-radius:6px; vertical-align:middle;">V2</span></h1>
+    <h1><span>Portal</span> Fetcher <span style="font-size:0.6em; background:var(--primary); color:white; padding:0.15em 0.5em; border-radius:6px; vertical-align:middle;">V3</span></h1>
 
     <!-- Form -->
     <div class="card">
@@ -610,6 +610,8 @@
         ['User ID', details.user_id],
         ['Name', details.name],
         ['Status', details.status],
+        ['Mobile', details.mobile],
+        ['Email', details.email],
         ['Router MAC', details.router_mac],
       ];
 
@@ -621,6 +623,21 @@
               <div class="detail-value">${value}</div>
             </div>
           `;
+        }
+      }
+
+      // Extra fields (portal-specific)
+      if (details.extra_fields) {
+        for (const [key, value] of Object.entries(details.extra_fields)) {
+          if (value) {
+            const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            grid.innerHTML += `
+              <div class="detail-item">
+                <div class="detail-label">${label}</div>
+                <div class="detail-value">${value}</div>
+              </div>
+            `;
+          }
         }
       }
 
