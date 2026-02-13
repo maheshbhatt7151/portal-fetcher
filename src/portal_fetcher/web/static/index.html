@@ -56,6 +56,14 @@
       transition: border-color 0.2s;
     }
     input:focus, select:focus { border-color: var(--primary); }
+    input:invalid.touched { border-color: var(--error); }
+    input:invalid.touched + .validation-msg { display: block; }
+    .validation-msg {
+      display: none;
+      font-size: 0.7rem;
+      color: var(--error);
+      margin-top: 0.2rem;
+    }
     select { cursor: pointer; }
 
     .btn {
@@ -275,6 +283,64 @@
       font-size: 0.85rem;
       color: var(--error);
     }
+
+    /* ── Mobile responsive ─────────────────────────── */
+    @media (max-width: 640px) {
+      body { padding: 1rem; }
+      .container { max-width: 100%; }
+      h1 { font-size: 1.25rem; margin-bottom: 1rem; }
+
+      .card { padding: 1rem; border-radius: 10px; }
+
+      .form-grid {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+      }
+      .form-group.full { grid-column: 1; }
+
+      input, select {
+        font-size: 16px; /* prevents iOS zoom on focus */
+        padding: 0.7rem 0.8rem;
+      }
+
+      .btn {
+        width: 100%;
+        padding: 0.85rem;
+        font-size: 1rem;
+      }
+
+      .progress-log { font-size: 0.7rem; max-height: 100px; }
+
+      .live-view-container { aspect-ratio: 16 / 10; border-radius: 8px; }
+
+      .details-grid {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+      }
+
+      .result-header { flex-wrap: wrap; }
+      .badge { font-size: 0.7rem; }
+
+      .screenshot-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+      }
+
+      .json-block { font-size: 0.65rem; padding: 0.75rem; max-height: 250px; }
+
+      .lightbox img {
+        max-width: 95vw;
+        max-height: 85vh;
+        border-radius: 4px;
+      }
+    }
+
+    @media (max-width: 380px) {
+      body { padding: 0.75rem; }
+      h1 { font-size: 1.1rem; }
+      .card { padding: 0.75rem; }
+      .screenshot-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -286,21 +352,24 @@
       <form id="fetchForm">
         <div class="form-grid">
           <div class="form-group full">
-            <label for="portalUrl">Portal URL</label>
+            <label for="portalUrl">Portal URL <span style="color:var(--error)">*</span></label>
             <input type="url" id="portalUrl" placeholder="https://partner.onebroadband.in/partner/Default.aspx" required>
-            <div id="detectStatus" style="font-size:0.75rem; margin-top:0.25rem; min-height:1.2em;"></div>
+            <span class="validation-msg">Please enter a valid URL</span>
           </div>
           <div class="form-group">
-            <label for="loginUser">Username</label>
+            <label for="loginUser">Username <span style="color:var(--error)">*</span></label>
             <input type="text" id="loginUser" placeholder="Username" required>
+            <span class="validation-msg">Username is required</span>
           </div>
           <div class="form-group">
-            <label for="loginPass">Password</label>
+            <label for="loginPass">Password <span style="color:var(--error)">*</span></label>
             <input type="password" id="loginPass" placeholder="Password" required>
+            <span class="validation-msg">Password is required</span>
           </div>
           <div class="form-group">
-            <label for="subscriber">Subscriber ID</label>
+            <label for="subscriber">Subscriber ID <span style="color:var(--error)">*</span></label>
             <input type="text" id="subscriber" placeholder="e.g. hardikkawa001u" required>
+            <span class="validation-msg">Subscriber ID is required</span>
           </div>
           <div class="form-group" style="justify-content: flex-end;">
             <button type="submit" class="btn" id="fetchBtn">Fetch Details</button>
@@ -380,37 +449,10 @@
 
     let screencastWs = null;
     let prevBlobUrl = null;
-    let detectTimer = null;
 
-    // Auto-detect portal when URL changes
-    const portalUrlInput = document.getElementById('portalUrl');
-    const detectStatus = document.getElementById('detectStatus');
-
-    portalUrlInput.addEventListener('input', () => {
-      clearTimeout(detectTimer);
-      const url = portalUrlInput.value.trim();
-      if (url.length < 8) {
-        detectStatus.innerHTML = '';
-        return;
-      }
-      detectStatus.innerHTML = '<span style="color:var(--text-muted)">Detecting portal...</span>';
-      detectTimer = setTimeout(async () => {
-        try {
-          const res = await fetch('/api/detect-portal', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ portal_url: url }),
-          });
-          const data = await res.json();
-          if (data.detected) {
-            detectStatus.innerHTML = `<span style="color:var(--success)">&#10003; Detected: <strong>${data.portal}</strong></span>`;
-          } else {
-            detectStatus.innerHTML = `<span style="color:var(--warning)">&#9888; No matching connector found</span>`;
-          }
-        } catch {
-          detectStatus.innerHTML = '';
-        }
-      }, 400);
+    // Validation — mark fields as touched on blur
+    document.querySelectorAll('#fetchForm input[required]').forEach(input => {
+      input.addEventListener('blur', () => input.classList.add('touched'));
     });
 
     // Lightbox
@@ -472,6 +514,11 @@
     // Form submit
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+
+      // Mark all fields touched to show validation
+      document.querySelectorAll('#fetchForm input[required]').forEach(i => i.classList.add('touched'));
+      if (!form.checkValidity()) return;
+
       fetchBtn.disabled = true;
       fetchBtn.textContent = 'Fetching...';
 

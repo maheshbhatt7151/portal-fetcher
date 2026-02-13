@@ -27,6 +27,7 @@ jobs: dict[str, dict[str, Any]] = {}
 
 
 class FetchRequest(BaseModel):
+    portal: str = ""
     portal_url: str
     login_user: str
     login_pass: str
@@ -183,20 +184,8 @@ async def _run_job(job_id: str, req: FetchRequest) -> None:
                 pass
 
     try:
-        # Auto-detect portal from URL
-        try:
-            portal_name, _ = detect_and_get_adapter(req.portal_url)
-            on_progress(f"Auto-detected portal: {portal_name}")
-        except KeyError:
-            jobs[job_id]["result"] = {
-                "error": f"No portal connector found for URL '{req.portal_url}'. "
-                "Add a YAML config with matching url_patterns."
-            }
-            jobs[job_id]["status"] = "failed"
-            return
-
         result = await _run_fetch(
-            portal=portal_name,
+            portal=req.portal,
             portal_url=req.portal_url,
             login_user=req.login_user,
             login_pass=req.login_pass,

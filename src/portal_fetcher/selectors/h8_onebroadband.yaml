@@ -7,6 +7,9 @@ portal:
   url_patterns:
     - "onebroadband"
     - "partner.onebroadband.in"
+    - "preciousnetcom"
+    - "qualitynet"
+    - "office.weebo.co.in"
 
 flow:
   # ── Login ──────────────────────────────────────────

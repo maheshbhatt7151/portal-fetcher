@@ -157,31 +157,28 @@ async def _run_fetch(
     on_progress: Optional[Callable[[str], None]] = None,
     on_screencast_frame: Optional[Callable[[bytes], None]] = None,
 ) -> FetchResult:
-    """Orchestrate browser launch -> adapter execution -> error handling."""
+    """Orchestrate browser launch -> adapter execution -> error handling.
+
+    Smart connector detection:
+    1. Try URL pattern match (instant, no browser needed)
+    2. If no match, open the page and probe each connector's login selectors
+    3. Use whichever connector's selectors are found on the page
+    4. If none match, return error
+    """
     from portal_fetcher.browser import start_screencast
+    from portal_fetcher.selector_store import get_probe_selectors
 
     def progress(msg: str) -> None:
         if on_progress:
             on_progress(msg)
 
     screenshots = ScreenshotManager(output_dir)
+    adapter_cls = None
+    adapter_kwargs = {}
 
-    # Auto-detect portal from URL if not provided
-    if not portal:
-        progress("Auto-detecting portal from URL...")
-        try:
-            portal, (adapter_cls, adapter_kwargs) = detect_and_get_adapter(portal_url)
-            progress(f"Detected portal: {portal}")
-        except KeyError as exc:
-            return FetchResult(
-                success=False,
-                portal="unknown",
-                subscriber=subscriber,
-                failure_reason=FailureReason.UNEXPECTED_ERROR,
-                error_message=str(exc),
-            )
-    else:
-        progress("Resolving adapter...")
+    # Step 1: If portal explicitly provided, use it directly
+    if portal:
+        progress(f"Using connector: {portal}")
         try:
             adapter_cls, adapter_kwargs = get_adapter(portal)
         except KeyError as exc:
@@ -193,15 +190,16 @@ async def _run_fetch(
                 error_message=str(exc),
             )
 
-    adapter = adapter_cls(
-        portal_url=portal_url,
-        login_user=login_user,
-        login_pass=login_pass,
-        subscriber=subscriber,
-        screenshots=screenshots,
-        **adapter_kwargs,
-    )
+    # Step 2: Try URL pattern match (instant, no browser)
+    if not adapter_cls:
+        progress("Checking URL patterns...")
+        try:
+            portal, (adapter_cls, adapter_kwargs) = detect_and_get_adapter(portal_url)
+            progress(f"URL matched connector: {portal}")
+        except KeyError:
+            progress("No URL pattern match — will probe page structure...")
 
+    # Step 3: Launch browser (needed for probing or execution)
     progress("Launching browser...")
 
     try:
@@ -213,9 +211,51 @@ async def _run_fetch(
                     cdp_session = await start_screencast(page, on_screencast_frame)
                     progress("Live view connected...")
                 except Exception:
-                    pass  # Screencast is optional — don't block fetch
+                    pass
 
-            progress("Executing portal flow...")
+            # Step 3b: If no connector yet, probe page structure
+            if not adapter_cls:
+                progress("Opening page to detect connector...")
+                try:
+                    await page.goto(portal_url, wait_until="domcontentloaded", timeout=timeout)
+                except Exception:
+                    pass  # Page may partially load — still try probing
+
+                probes = get_probe_selectors()
+                for probe_name, probe_selector in probes:
+                    try:
+                        el = await page.wait_for_selector(probe_selector, timeout=5000)
+                        if el:
+                            portal = probe_name
+                            adapter_cls, adapter_kwargs = get_adapter(portal)
+                            progress(f"Page structure matched: {portal}")
+                            break
+                    except Exception:
+                        progress(f"  Tried {probe_name} — no match")
+                        continue
+
+                if not adapter_cls:
+                    return FetchResult(
+                        success=False,
+                        portal="unknown",
+                        subscriber=subscriber,
+                        failure_reason=FailureReason.UNEXPECTED_ERROR,
+                        error_message="No connector matched this portal. None of the available connectors' "
+                        "login form selectors were found on the page.",
+                        screenshots=screenshots.paths,
+                    )
+
+            # Step 4: Create adapter and execute
+            adapter = adapter_cls(
+                portal_url=portal_url,
+                login_user=login_user,
+                login_pass=login_pass,
+                subscriber=subscriber,
+                screenshots=screenshots,
+                **adapter_kwargs,
+            )
+
+            progress(f"Executing flow: {portal}...")
             try:
                 result = await adapter.execute(page)
             except PortalFetchError as exc:
@@ -251,7 +291,6 @@ async def _run_fetch(
                     screenshots=screenshots.paths,
                 )
             finally:
-                # Stop screencast before browser closes
                 if cdp_session:
                     try:
                         await cdp_session.send("Page.stopScreencast")
@@ -261,7 +300,7 @@ async def _run_fetch(
     except Exception as exc:
         return FetchResult(
             success=False,
-            portal=portal,
+            portal=portal or "unknown",
             subscriber=subscriber,
             failure_reason=FailureReason.UNEXPECTED_ERROR,
             error_message=f"Browser launch failed: {type(exc).__name__}: {exc}",

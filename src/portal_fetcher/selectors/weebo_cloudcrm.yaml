@@ -6,7 +6,6 @@ portal:
   display_name: "CloudCRM Weebo"
   url_patterns:
     - "cloudcrm.weebo"
-    - "weebo.co.in"
 
 flow:
   # ── Login ──────────────────────────────────────────

@@ -50,6 +50,23 @@ def detect_portal(url: str) -> str | None:
     return None
 
 
+def get_probe_selectors() -> list[tuple[str, str]]:
+    """Return (connector_name, css_selector) pairs for probing page structure.
+
+    Extracts the wait_for selector from the first goto step in each connector's flow.
+    These selectors are typically login form elements that uniquely identify the portal type.
+    """
+    probes = []
+    for name in list_configs():
+        config = load_selectors(name)
+        flow = config.get("flow", [])
+        for step in flow:
+            if step.get("action") == "goto" and "wait_for" in step:
+                probes.append((name, step["wait_for"]))
+                break
+    return probes
+
+
 def get_selector(config: dict[str, Any], dotted_key: str) -> str | None:
     """Resolve a dotted key like 'login.username_field' from a nested config dict.
 
