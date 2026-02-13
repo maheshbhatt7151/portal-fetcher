@@ -16,8 +16,21 @@ async def create_browser_page(
     timeout: int = 30000,
 ) -> AsyncIterator[Page]:
     """Launch Chromium and yield a single Page, then clean up."""
+    import os
+
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=headless)
+        # Extra args for Docker / cloud environments (limited /dev/shm)
+        launch_args: list[str] = []
+        if os.environ.get("RENDER") or os.environ.get("DOCKER_ENV"):
+            launch_args = [
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--no-sandbox",
+                "--single-process",
+                "--disable-setuid-sandbox",
+            ]
+
+        browser = await pw.chromium.launch(headless=headless, args=launch_args)
         context = await browser.new_context(
             viewport={"width": 1280, "height": 900},
             ignore_https_errors=True,

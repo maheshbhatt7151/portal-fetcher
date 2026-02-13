@@ -1,0 +1,10 @@
+.venv/
+output/
+__pycache__/
+*.pyc
+.git/
+*.egg-info/
+debug_*.py
+record_demo.py
+parse_discovery.py
+ARCHITECTURE.md

@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: portal-fetcher
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: RENDER
+        value: "1"
+      - key: DOCKER_ENV
+        value: "1"
