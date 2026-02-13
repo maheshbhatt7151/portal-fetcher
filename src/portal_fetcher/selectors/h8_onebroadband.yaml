@@ -1,0 +1,62 @@
+# H8 OneBroadband (partner.onebroadband.in) — ASP.NET WebForms portal
+# Edit selectors here when the portal DOM changes. No Python changes needed.
+
+portal:
+  name: h8_onebroadband
+  base_path: /partner
+
+login:
+  username_field: "input[id*='txtUserName'], input[name*='UserName']"
+  password_field: "input[id*='txtPassword'], input[name*='Password']"
+  submit_button: "input[id*='btnLogin'], input[id*='btnSubmit'], button:has-text('Login'), input[type='submit'][value*='Log']"
+  settle_seconds: 2
+
+  # Failure detection selectors
+  otp_field: "input[id*='txtOTP'], input[id*='otp']"
+  captcha_image: "img[id*='captcha'], img[id*='Captcha'], div[class*='captcha']"
+  error_label: "[id*='lblError'], .error-message, [class*='alert-danger']"
+
+  # Agreement / announcement popup dismiss buttons (tried in order)
+  popup_dismiss:
+    - "input[id*='btnAgree']"
+    - "input[id*='btnClose']"
+    - "button:has-text('Close')"
+    - "button:has-text('OK')"
+    - "a:has-text('Close')"
+
+accounts:
+  # Navigate directly to this path (relative to base URL)
+  page_path: /Accounts.aspx
+  search_field: "#ContentPlaceHolder1_txtserch"
+  search_button: "#ContentPlaceHolder1_btnserch"
+  search_wait_seconds: 4
+
+  # Results grid
+  grid: "#ContentPlaceHolder1_gdcomp"
+  grid_link: "#ContentPlaceHolder1_gdcomp_LinkButton1_0"
+  grid_link_fallback: "#ContentPlaceHolder1_gdcomp a:has-text('{subscriber}')"
+
+detail:
+  settle_seconds: 2
+
+  # Field selectors on the detail page
+  fields:
+    user_id: "#ContentPlaceHolder1_lbl_USERNAME"
+    name: "#ContentPlaceHolder1_lbl_AccName"
+    status: "#ContentPlaceHolder1_lbl_RemainingDays"
+    router_mac: "#ContentPlaceHolder1_lbl_MACID"
+
+  # Current plan
+  current_plan:
+    label: "#ContentPlaceHolder1_lbl_CurrentPlan"
+    plan_name: "#ContentPlaceHolder1_tbAdditonal_tpPlan_gdPlan_lblPlan_0"
+    validity: "#ContentPlaceHolder1_tbAdditonal_tpPlan_gdPlan_lblvalidity_0"
+    validity_unit: "#ContentPlaceHolder1_tbAdditonal_tpPlan_gdPlan_Label41_0"
+    activation_date: "#ContentPlaceHolder1_tbAdditonal_tpPlan_gdPlan_lblActivationDate_0"
+    expiry_date: "#ContentPlaceHolder1_tbAdditonal_tpPlan_gdPlan_lblExpiryDate_0"
+
+  # Future plan tab
+  future_plan:
+    tab: "#__tab_ContentPlaceHolder1_tbAdditonal_tpFutureplan"
+    content: "#ContentPlaceHolder1_tbAdditonal_tpFutureplan"
+    empty_marker: "no recent"

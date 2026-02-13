@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portal Fetcher</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #22c55e;
+      --error: #ef4444;
+      --warning: #f59e0b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; }
+    h1 span { color: var(--primary); }
+
+    /* Form */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .form-group { display: flex; flex-direction: column; gap: 0.35rem; }
+    .form-group.full { grid-column: 1 / -1; }
+    label { font-size: 0.8rem; color: var(--text-muted); font-weight: 500; }
+    input, select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.6rem 0.8rem;
+      color: var(--text);
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--primary); }
+    select { cursor: pointer; }
+
+    .btn {
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 0.7rem 1.5rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-top: 0.5rem;
+    }
+    .btn:hover { background: var(--primary-hover); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Progress */
+    .progress-area { margin-top: 1rem; display: none; }
+    .progress-area.active { display: block; }
+    .progress-bar-track {
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 0.75rem;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--primary);
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.3s;
+      animation: indeterminate 1.5s ease-in-out infinite;
+    }
+    @keyframes indeterminate {
+      0% { margin-left: -30%; width: 30%; }
+      50% { margin-left: 30%; width: 50%; }
+      100% { margin-left: 100%; width: 30%; }
+    }
+    .progress-bar-fill.done { animation: none; width: 100%; }
+    .progress-log {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-family: 'SF Mono', Menlo, monospace;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    .progress-log div { padding: 0.15rem 0; }
+
+    /* Result */
+    .result-area { display: none; }
+    .result-area.active { display: block; }
+    .result-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      text-transform: uppercase;
+    }
+    .badge.success { background: rgba(34,197,94,0.15); color: var(--success); }
+    .badge.error { background: rgba(239,68,68,0.15); color: var(--error); }
+
+    .details-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+    .detail-item { }
+    .detail-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.2rem; }
+    .detail-value { font-size: 0.95rem; }
+
+    .plan-section { margin-top: 1rem; }
+    .plan-title { font-size: 0.85rem; font-weight: 600; color: var(--primary); margin-bottom: 0.5rem; }
+
+    /* Screenshots */
+    .screenshots { margin-top: 1rem; }
+    .screenshots h3 { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .screenshot-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0.75rem;
+    }
+    .screenshot-thumb {
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .screenshot-thumb:hover { border-color: var(--primary); }
+    .screenshot-thumb img { width: 100%; display: block; }
+    .screenshot-label {
+      padding: 0.4rem 0.6rem;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      background: var(--bg);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Raw JSON toggle */
+    .json-toggle {
+      font-size: 0.8rem;
+      color: var(--primary);
+      cursor: pointer;
+      background: none;
+      border: none;
+      margin-top: 1rem;
+      font-family: inherit;
+    }
+    .json-toggle:hover { text-decoration: underline; }
+    .json-block {
+      display: none;
+      margin-top: 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: 'SF Mono', Menlo, monospace;
+      font-size: 0.75rem;
+      max-height: 400px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .json-block.open { display: block; }
+
+    /* Lightbox */
+    .lightbox {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+    }
+    .lightbox.open { display: flex; }
+    .lightbox img {
+      max-width: 90vw;
+      max-height: 90vh;
+      border-radius: 8px;
+      box-shadow: 0 0 40px rgba(0,0,0,0.5);
+    }
+
+    .error-msg {
+      margin-top: 0.75rem;
+      padding: 0.75rem;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 8px;
+      font-size: 0.85rem;
+      color: var(--error);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1><span>Portal</span> Fetcher</h1>
+
+    <!-- Form -->
+    <div class="card">
+      <form id="fetchForm">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="portal">Portal</label>
+            <select id="portal" required>
+              <option value="">Loading...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="portalUrl">Portal URL</label>
+            <input type="url" id="portalUrl" placeholder="https://partner.onebroadband.in/partner/Default.aspx" required>
+          </div>
+          <div class="form-group">
+            <label for="loginUser">Username</label>
+            <input type="text" id="loginUser" placeholder="Username" required>
+          </div>
+          <div class="form-group">
+            <label for="loginPass">Password</label>
+            <input type="password" id="loginPass" placeholder="Password" required>
+          </div>
+          <div class="form-group">
+            <label for="subscriber">Subscriber ID</label>
+            <input type="text" id="subscriber" placeholder="e.g. hardikkawa001u" required>
+          </div>
+          <div class="form-group" style="justify-content: flex-end;">
+            <button type="submit" class="btn" id="fetchBtn">Fetch Details</button>
+          </div>
+        </div>
+      </form>
+
+      <!-- Progress -->
+      <div class="progress-area" id="progressArea">
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+        <div class="progress-log" id="progressLog"></div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div class="result-area" id="resultArea">
+      <div class="card">
+        <div class="result-header">
+          <span class="badge" id="resultBadge"></span>
+          <span id="resultPortal" style="font-size:0.85rem; color:var(--text-muted);"></span>
+        </div>
+
+        <div id="resultSuccess">
+          <div class="details-grid" id="detailsGrid"></div>
+          <div class="plan-section" id="currentPlanSection"></div>
+          <div class="plan-section" id="futurePlanSection"></div>
+        </div>
+
+        <div id="resultError" style="display:none;">
+          <div class="error-msg" id="errorMessage"></div>
+        </div>
+
+        <!-- Screenshots -->
+        <div class="screenshots" id="screenshotsSection" style="display:none;">
+          <h3>Screenshots</h3>
+          <div class="screenshot-grid" id="screenshotGrid"></div>
+        </div>
+
+        <!-- Raw JSON -->
+        <button class="json-toggle" id="jsonToggle">Show raw JSON</button>
+        <pre class="json-block" id="jsonBlock"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div class="lightbox" id="lightbox">
+    <img id="lightboxImg" src="" alt="Screenshot">
+  </div>
+
+  <script>
+    const form = document.getElementById('fetchForm');
+    const fetchBtn = document.getElementById('fetchBtn');
+    const progressArea = document.getElementById('progressArea');
+    const progressBar = document.getElementById('progressBar');
+    const progressLog = document.getElementById('progressLog');
+    const resultArea = document.getElementById('resultArea');
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightboxImg');
+
+    // Load portals
+    fetch('/api/portals')
+      .then(r => r.json())
+      .then(data => {
+        const sel = document.getElementById('portal');
+        sel.innerHTML = data.portals.map(p =>
+          `<option value="${p}">${p}</option>`
+        ).join('');
+      });
+
+    // Lightbox
+    lightbox.addEventListener('click', () => lightbox.classList.remove('open'));
+
+    function openLightbox(src) {
+      lightboxImg.src = src;
+      lightbox.classList.add('open');
+    }
+
+    // JSON toggle
+    document.getElementById('jsonToggle').addEventListener('click', function() {
+      const block = document.getElementById('jsonBlock');
+      block.classList.toggle('open');
+      this.textContent = block.classList.contains('open') ? 'Hide raw JSON' : 'Show raw JSON';
+    });
+
+    // Form submit
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      fetchBtn.disabled = true;
+      fetchBtn.textContent = 'Fetching...';
+
+      progressArea.classList.add('active');
+      progressBar.classList.remove('done');
+      progressLog.innerHTML = '';
+      resultArea.classList.remove('active');
+
+      const body = {
+        portal: document.getElementById('portal').value,
+        portal_url: document.getElementById('portalUrl').value,
+        login_user: document.getElementById('loginUser').value,
+        login_pass: document.getElementById('loginPass').value,
+        subscriber: document.getElementById('subscriber').value,
+      };
+
+      try {
+        // Start fetch job
+        const startRes = await fetch('/api/fetch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const { job_id } = await startRes.json();
+
+        // Connect to SSE stream
+        const evtSource = new EventSource(`/api/fetch/${job_id}/stream`);
+
+        evtSource.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'progress') {
+            const div = document.createElement('div');
+            div.textContent = `> ${data.message}`;
+            progressLog.appendChild(div);
+            progressLog.scrollTop = progressLog.scrollHeight;
+          }
+
+          if (data.type === 'done') {
+            evtSource.close();
+            progressBar.classList.add('done');
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = 'Fetch Details';
+            showResult(data.result);
+          }
+        };
+
+        evtSource.onerror = () => {
+          evtSource.close();
+          // Fall back to polling
+          pollJob(job_id);
+        };
+
+      } catch (err) {
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = 'Fetch Details';
+        progressLog.innerHTML += `<div style="color:var(--error)">Error: ${err.message}</div>`;
+      }
+    });
+
+    async function pollJob(jobId) {
+      while (true) {
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const res = await fetch(`/api/fetch/${jobId}`);
+          const data = await res.json();
+
+          // Show new progress entries
+          const logCount = progressLog.children.length;
+          for (let i = logCount; i < data.progress.length; i++) {
+            const div = document.createElement('div');
+            div.textContent = `> ${data.progress[i]}`;
+            progressLog.appendChild(div);
+          }
+          progressLog.scrollTop = progressLog.scrollHeight;
+
+          if (data.status === 'completed' || data.status === 'failed') {
+            progressBar.classList.add('done');
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = 'Fetch Details';
+            showResult(data.result);
+            break;
+          }
+        } catch (e) {
+          break;
+        }
+      }
+    }
+
+    function showResult(result) {
+      resultArea.classList.add('active');
+
+      const badge = document.getElementById('resultBadge');
+      const portal = document.getElementById('resultPortal');
+      const successDiv = document.getElementById('resultSuccess');
+      const errorDiv = document.getElementById('resultError');
+      const errorMsg = document.getElementById('errorMessage');
+
+      portal.textContent = `${result.portal} / ${result.subscriber}`;
+
+      if (result.success) {
+        badge.textContent = 'Success';
+        badge.className = 'badge success';
+        successDiv.style.display = '';
+        errorDiv.style.display = 'none';
+        renderDetails(result.details);
+      } else {
+        badge.textContent = result.failure_reason || 'Failed';
+        badge.className = 'badge error';
+        successDiv.style.display = 'none';
+        errorDiv.style.display = '';
+        errorMsg.textContent = result.error_message || 'Unknown error';
+      }
+
+      // Screenshots
+      const screenshotsSection = document.getElementById('screenshotsSection');
+      const screenshotGrid = document.getElementById('screenshotGrid');
+      const urls = result.screenshot_urls || [];
+      if (urls.length > 0) {
+        screenshotsSection.style.display = '';
+        screenshotGrid.innerHTML = urls.map(url => {
+          const filename = url.split('/').pop();
+          return `
+            <div class="screenshot-thumb" onclick="openLightbox('${url}')">
+              <img src="${url}" alt="${filename}" loading="lazy">
+              <div class="screenshot-label">${filename}</div>
+            </div>
+          `;
+        }).join('');
+      } else {
+        screenshotsSection.style.display = 'none';
+      }
+
+      // Raw JSON
+      document.getElementById('jsonBlock').textContent = JSON.stringify(result, null, 2);
+      document.getElementById('jsonBlock').classList.remove('open');
+      document.getElementById('jsonToggle').textContent = 'Show raw JSON';
+    }
+
+    function renderDetails(details) {
+      if (!details) return;
+
+      const grid = document.getElementById('detailsGrid');
+      grid.innerHTML = '';
+
+      const fields = [
+        ['User ID', details.user_id],
+        ['Name', details.name],
+        ['Status', details.status],
+        ['Router MAC', details.router_mac],
+      ];
+
+      for (const [label, value] of fields) {
+        if (value) {
+          grid.innerHTML += `
+            <div class="detail-item">
+              <div class="detail-label">${label}</div>
+              <div class="detail-value">${value}</div>
+            </div>
+          `;
+        }
+      }
+
+      // Current plan
+      const cpDiv = document.getElementById('currentPlanSection');
+      cpDiv.innerHTML = '';
+      if (details.current_plan) {
+        cpDiv.innerHTML = renderPlan('Current Plan', details.current_plan);
+      }
+
+      // Future plan
+      const fpDiv = document.getElementById('futurePlanSection');
+      fpDiv.innerHTML = '';
+      if (details.future_plan) {
+        fpDiv.innerHTML = renderPlan('Future Plan', details.future_plan);
+      }
+    }
+
+    function renderPlan(title, plan) {
+      const fields = [
+        ['Plan', plan.plan_name],
+        ['Speed', plan.speed],
+        ['Duration', plan.duration],
+        ['Start', plan.start_date],
+        ['Expiry', plan.expiry_date],
+      ].filter(([, v]) => v);
+
+      return `
+        <div class="plan-title">${title}</div>
+        <div class="details-grid">
+          ${fields.map(([label, value]) => `
+            <div class="detail-item">
+              <div class="detail-label">${label}</div>
+              <div class="detail-value">${value}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+  </script>
+</body>
+</html>

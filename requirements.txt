@@ -1,0 +1,6 @@
+playwright>=1.40
+click>=8.1
+pydantic>=2.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pyyaml>=6.0
